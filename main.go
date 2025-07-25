@@ -4,71 +4,84 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
-	"sync"
 
 	_ "github.com/denisenkom/go-mssqldb"
 )
 
-var (
-	connectionLog []string
-	logMutex      sync.Mutex
-)
+func main() {
+	// Get connection parameters from environment variables or set defaults
+	server := getEnvOrDefault("MSSQL_SERVER", "localhost")
+	port := getEnvOrDefault("MSSQL_PORT", "1433")
+	user := getEnvOrDefault("MSSQL_USER", "sa")
+	password := getEnvOrDefault("MSSQL_PASSWORD", "YourPassword123!")
+	database := getEnvOrDefault("MSSQL_DB", "master")
 
-func logMessage(msg string) {
-	log.Println(msg)
-	logMutex.Lock()
-	defer logMutex.Unlock()
-	connectionLog = append(connectionLog, msg)
-}
+	// Build connection string
+	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%s;database=%s",
+		server, user, password, port, database)
 
-func connectToMSSQL(server, port, user, password, database string) (*sql.DB, error) {
-	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%s;database=%s", server, user, password, port, database)
+	fmt.Printf("Attempting to connect to MSSQL server: %s:%s\n", server, port)
+
+	// Open connection
 	db, err := sql.Open("sqlserver", connString)
 	if err != nil {
-		logMessage("Failed to create DB handle: " + err.Error())
-		return nil, err
+		log.Fatal("Error creating connection pool: ", err.Error())
 	}
+	defer db.Close()
 
+	// Test connection
 	err = db.Ping()
 	if err != nil {
-		logMessage("Failed to connect to DB: " + err.Error())
-		return nil, err
+		log.Fatal("Error connecting to database: ", err.Error())
 	}
+	fmt.Println("✅ Connected to MSSQL database!")
 
-	logMessage("Successfully connected to the SQL Server.")
-	return db, nil
-}
-
-func logHandler(w http.ResponseWriter, r *http.Request) {
-	logMutex.Lock()
-	defer logMutex.Unlock()
-	w.Header().Set("Content-Type", "text/plain")
-	for _, msg := range connectionLog {
-		fmt.Fprintln(w, msg)
-	}
-}
-
-func main() {
-	// Change these with actual credentials or use environment variables
-	server := os.Getenv("MSSQL_SERVER")   // e.g., "localhost"
-	port := os.Getenv("MSSQL_PORT")       // e.g., "1433"
-	user := os.Getenv("MSSQL_USER")       // e.g., "sa"
-	password := os.Getenv("MSSQL_PASSWORD")
-	database := os.Getenv("MSSQL_DB")     // e.g., "master"
-
-	_, err := connectToMSSQL(server, port, user, password, database)
+	// Test write: create a table and insert a row
+	fmt.Println("Creating test table...")
+	_, err = db.Exec(`
+		IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='test_table' AND xtype='U')
+		CREATE TABLE test_table (
+			id INT PRIMARY KEY,
+			name NVARCHAR(50),
+			created_at DATETIME DEFAULT GETDATE()
+		)`)
 	if err != nil {
-		logMessage("Error while connecting to SQL Server: " + err.Error())
+		log.Fatal("Error creating table: ", err.Error())
+	}
+	fmt.Println("✅ Table created successfully!")
+
+	// Insert a test row
+	fmt.Println("Inserting test data...")
+	_, err = db.Exec(`INSERT INTO test_table (id, name) VALUES (@p1, @p2)`, 1, "Test Name")
+	if err != nil {
+		// If row already exists, try updating it instead
+		_, err = db.Exec(`UPDATE test_table SET name = @p1 WHERE id = @p2`, "Updated Test Name", 1)
+		if err != nil {
+			log.Fatal("Error inserting/updating row: ", err.Error())
+		}
+		fmt.Println("✅ Row updated successfully!")
 	} else {
-		logMessage("Connection established successfully.")
+		fmt.Println("✅ Row inserted successfully!")
 	}
 
-	http.HandleFunc("/logs", logHandler)
-	logMessage("Starting web server on :8080...")
-	err = http.ListenAndServe(":8080", nil)
+	// Test read: query the data back
+	fmt.Println("Reading test data...")
+	var id int
+	var name string
+	var createdAt string
+	err = db.QueryRow("SELECT id, name, created_at FROM test_table WHERE id = @p1", 1).Scan(&id, &name, &createdAt)
 	if err != nil {
-		log.Fatalf("Failed to start web server: %v", err)
+		log.Fatal("Error reading data: ", err.Error())
 	}
+	fmt.Printf("✅ Read data successfully: ID=%d, Name=%s, Created=%s\n", id, name, createdAt)
+
+	fmt.Println("\n🎉 All database operations completed successfully!")
+}
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
