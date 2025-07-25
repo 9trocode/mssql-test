@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 
 	_ "github.com/denisenkom/go-mssqldb"
@@ -77,6 +78,36 @@ func main() {
 	fmt.Printf("✅ Read data successfully: ID=%d, Name=%s, Created=%s\n", id, name, createdAt)
 
 	fmt.Println("\n🎉 All database operations completed successfully!")
+
+	// Set up HTTP endpoints
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MSSQL Test Server</title>
+</head>
+<body>
+    <h1>MSSQL Connection Test Server</h1>
+    <p>✅ Database connection successful!</p>
+    <p>✅ Table operations completed!</p>
+    <p>Server is running and database is accessible.</p>
+    <p>Last test data: ID=%d, Name=%s, Created=%s</p>
+</body>
+</html>`, id, name, createdAt)
+	})
+
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"healthy","database":"connected","message":"MSSQL test server is running"}`)
+	})
+
+	// Start the HTTP server
+	fmt.Println("🚀 Starting HTTP server on port 8080...")
+	fmt.Println("Visit http://localhost:8080 to see the status")
+	fmt.Println("Visit http://localhost:8080/health for health check")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
